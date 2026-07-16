@@ -44,6 +44,10 @@ ScaffoldingReadMe.txt
 *~
 CodeCoverage/
 
+# Local app data
+study-buddy-quiz.db
+AGENTS.md
+
 # MSBuild Binary and Structured Log
 *.binlog
 

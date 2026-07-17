@@ -1,10 +1,8 @@
 using study_buddy_quiz.Extensions;
 
+Environment.SetEnvironmentVariable("DOTNET_hostBuilder:reloadConfigOnChange", "false");
+
 var builder = WebApplication.CreateBuilder(args);
-builder.Configuration.Sources
-    .OfType<Microsoft.Extensions.Configuration.FileConfigurationSource>()
-    .ToList()
-    .ForEach(source => source.ReloadOnChange = false);
 
 builder.Services.AddApplicationServices(builder.Configuration);
 

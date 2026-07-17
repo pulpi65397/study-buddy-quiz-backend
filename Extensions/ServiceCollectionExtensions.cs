@@ -15,20 +15,14 @@ public static class ServiceCollectionExtensions
         services.AddHttpClient<QuizGenerationService>();
         services.AddScoped<QuizContentExtractor>();
 
+        var allowedOrigins = (configuration["ALLOWED_ORIGINS"] ?? "http://localhost:5173")
+            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
         services.AddCors(options =>
         {
             options.AddPolicy("FrontendPolicy", policy =>
             {
-                policy.SetIsOriginAllowed(origin =>
-                    {
-                        if (string.IsNullOrWhiteSpace(origin))
-                        {
-                            return false;
-                        }
-
-                        return origin.StartsWith("http://localhost:517", StringComparison.OrdinalIgnoreCase)
-                            || origin.StartsWith("http://127.0.0.1:517", StringComparison.OrdinalIgnoreCase);
-                    })
+                policy.WithOrigins(allowedOrigins)
                     .AllowAnyHeader()
                     .AllowAnyMethod();
             });

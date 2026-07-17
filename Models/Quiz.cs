@@ -39,7 +39,7 @@ public class Question
 
     public string? Explanation { get; set; }
 
-    public bool IsApproved { get; set; }
+    public bool? IsApproved { get; set; }
 
     public Quiz Quiz { get; set; } = null!;
 }

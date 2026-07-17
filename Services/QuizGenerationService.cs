@@ -3,7 +3,6 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
-using Microsoft.Extensions.Configuration;
 using study_buddy_quiz.Dtos;
 using study_buddy_quiz.Models;
 
@@ -13,21 +12,19 @@ public class QuizGenerationService
 {
     private static readonly Regex SentenceRegex = new(@"[^.!?]+[.!?]?");
     private readonly HttpClient _httpClient;
-    private readonly IConfiguration _configuration;
 
-    public QuizGenerationService(HttpClient httpClient, IConfiguration configuration)
+    public QuizGenerationService(HttpClient httpClient)
     {
         _httpClient = httpClient;
-        _configuration = configuration;
     }
 
-    public QuizGenerationResponseDto GenerateFromText(string text, int questionCount, IReadOnlyCollection<QuestionType> questionTypes)
+    public QuizGenerationResponseDto GenerateFromText(string text, int questionCount, IReadOnlyCollection<QuestionType> questionTypes, string apiKey)
     {
         var cleanedText = NormalizeInput(text);
         var sentences = ExtractSentences(cleanedText);
         var facts = sentences.Count > 0 ? sentences : new List<string> { cleanedText };
 
-        var generatedQuestions = TryGenerateWithOpenAi(cleanedText, questionCount, questionTypes);
+        var generatedQuestions = TryGenerateWithOpenAi(cleanedText, questionCount, questionTypes, apiKey);
         if (generatedQuestions.Count == 0)
         {
             generatedQuestions = BuildFallbackQuestions(facts, questionCount, questionTypes);
@@ -42,46 +39,80 @@ public class QuizGenerationService
         };
     }
 
-    public QuizGenerationResponseDto GenerateFromUrl(string url, int questionCount, IReadOnlyCollection<QuestionType> questionTypes)
+    public QuizGenerationResponseDto GenerateFromUrl(string url, int questionCount, IReadOnlyCollection<QuestionType> questionTypes, string apiKey)
     {
         var sourceText = $"Artykuł: {url}. Treść z linku została odczytana jako punkt startowy do generowania quizu.";
-        return GenerateFromText(sourceText, questionCount, questionTypes);
+        return GenerateFromText(sourceText, questionCount, questionTypes, apiKey);
     }
 
-    public QuizGenerationResponseDto GenerateFromFileContent(string content, int questionCount, IReadOnlyCollection<QuestionType> questionTypes)
+    public QuizGenerationResponseDto GenerateFromFileContent(string content, int questionCount, IReadOnlyCollection<QuestionType> questionTypes, string apiKey)
     {
-        return GenerateFromText(content, questionCount, questionTypes);
+        return GenerateFromText(content, questionCount, questionTypes, apiKey);
     }
 
-    private List<QuizGenerationQuestionDto> TryGenerateWithOpenAi(string text, int questionCount, IReadOnlyCollection<QuestionType> questionTypes)
+    private List<QuizGenerationQuestionDto> TryGenerateWithOpenAi(string text, int questionCount, IReadOnlyCollection<QuestionType> questionTypes, string apiKey)
     {
-        var apiKey = _configuration["OpenAI:ApiKey"] ?? _configuration["OpenAI__ApiKey"];
-        if (string.IsNullOrWhiteSpace(apiKey))
-        {
-            return new List<QuizGenerationQuestionDto>();
-        }
-
         var types = questionTypes.Any() ? questionTypes : new[] { QuestionType.MultipleChoice, QuestionType.TrueFalse };
 
-        var prompt = $"Wygeneruj quiz z poniższego materiału. Zwróć TYLKO poprawny JSON bez markdownu. " +
-                      "Schemat: { \"questions\": [{ \"text\": string, \"type\": string, \"options\": string[], \"correctAnswer\": string, \"explanation\": string, \"isApproved\": false }] }. " +
+        var prompt = $"Wygeneruj po polsku quiz wyłącznie na podstawie poniższego materiału. Zwróć TYLKO poprawny JSON bez markdownu. " +
+                      "Schemat: { \"questions\": [{ \"text\": string, \"type\": string, \"options\": string[], \"correctAnswer\": string, \"explanation\": string }] }. " +
+                      "Dla pytania MultipleChoice przygotuj dokładnie cztery unikalne, pełne i sensowne odpowiedzi. Jedna odpowiedź musi być poprawna, występować w options i dokładnie odpowiadać correctAnswer. Nie używaj pojedynczych słów, wypełniaczy ani fragmentów polecenia. Pytanie ma być konkretne, a explanation ma krótko uzasadniać poprawną odpowiedź materiałem. " +
                       $"Liczba pytań: {Math.Max(1, questionCount)}. Typy pytań: {string.Join(", ", types)}. " +
                       $"Materiał: {text}";
 
-        var payload = new
+        var requestBody = new
         {
-            model = "gpt-4o-mini",
+            model = "gpt-5",
             temperature = 0.4,
-            messages = new[]
+            input = new[]
             {
-                new { role = "system", content = "Odpowiadaj wyłącznie w czystym JSON zgodnym z podanym schematem." },
                 new { role = "user", content = prompt }
+            },
+            text = new
+            {
+                format = new
+                {
+                    type = "json_schema",
+                    name = "quiz_generation",
+                    strict = true,
+                    schema = new
+                    {
+                        type = "object",
+                        properties = new
+                        {
+                            questions = new
+                            {
+                                type = "array",
+                                items = new
+                                {
+                                    type = "object",
+                                    properties = new
+                                    {
+                                        text = new { type = "string" },
+                                        type = new { type = "string" },
+                                        options = new
+                                        {
+                                            type = "array",
+                                            items = new { type = "string" }
+                                        },
+                                        correctAnswer = new { type = "string" },
+                                        explanation = new { type = "string" }
+                                    },
+                                    required = new[] { "text", "type", "options", "correctAnswer", "explanation" },
+                                    additionalProperties = false
+                                }
+                            }
+                        },
+                        required = new[] { "questions" },
+                        additionalProperties = false
+                    }
+                }
             }
         };
 
-        using var request = new HttpRequestMessage(HttpMethod.Post, "https://api.openai.com/v1/chat/completions");
+        using var request = new HttpRequestMessage(HttpMethod.Post, "https://api.openai.com/v1/responses");
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
-        request.Content = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json");
+        request.Content = new StringContent(JsonSerializer.Serialize(requestBody), Encoding.UTF8, "application/json");
 
         try
         {
@@ -94,18 +125,17 @@ public class QuizGenerationService
             }
 
             using var document = JsonDocument.Parse(responseContent);
-            var message = document.RootElement
-                .GetProperty("choices")[0]
-                .GetProperty("message")
-                .GetProperty("content")
-                .GetString();
+            var outputText = document.RootElement
+                .TryGetProperty("output_text", out var outputTextElement)
+                ? outputTextElement.GetString()
+                : null;
 
-            if (string.IsNullOrWhiteSpace(message))
+            if (string.IsNullOrWhiteSpace(outputText))
             {
                 return new List<QuizGenerationQuestionDto>();
             }
 
-            var normalized = message.Trim();
+            var normalized = outputText.Trim();
             if (normalized.StartsWith("```", StringComparison.OrdinalIgnoreCase))
             {
                 normalized = normalized.Replace("```json", string.Empty, StringComparison.OrdinalIgnoreCase).Replace("```", string.Empty, StringComparison.OrdinalIgnoreCase).Trim();
@@ -130,7 +160,7 @@ public class QuizGenerationService
                 Options = question.Options,
                 CorrectAnswer = question.CorrectAnswer,
                 Explanation = question.Explanation,
-                IsApproved = question.IsApproved
+                IsApproved = null
             }).ToList();
         }
         catch
@@ -142,61 +172,83 @@ public class QuizGenerationService
     private static List<QuizGenerationQuestionDto> BuildFallbackQuestions(List<string> facts, int questionCount, IReadOnlyCollection<QuestionType> questionTypes)
     {
         var effectiveTypes = questionTypes.Any() ? questionTypes.ToArray() : new[] { QuestionType.MultipleChoice, QuestionType.TrueFalse };
+        var declarativeFacts = facts
+            .Where(fact => fact.Contains(" służą do ", StringComparison.OrdinalIgnoreCase))
+            .ToList();
+        var sourceFacts = declarativeFacts.Count > 0 ? declarativeFacts : facts;
         var generatedQuestions = new List<QuizGenerationQuestionDto>();
 
-        foreach (var type in effectiveTypes)
+        for (var index = 0; index < Math.Max(1, questionCount); index++)
         {
-            if (generatedQuestions.Count >= Math.Max(1, questionCount))
-            {
-                break;
-            }
-
-            generatedQuestions.Add(CreateQuestion(type, facts));
+            var type = effectiveTypes[index % effectiveTypes.Length];
+            generatedQuestions.Add(CreateQuestion(type, sourceFacts[index % sourceFacts.Count]));
         }
 
         return generatedQuestions;
     }
 
-    private static QuizGenerationQuestionDto CreateQuestion(QuestionType type, List<string> facts)
+    private static QuizGenerationQuestionDto CreateQuestion(QuestionType type, string fact)
     {
         return type switch
         {
-            QuestionType.MultipleChoice => CreateMultipleChoiceQuestion(facts),
-            QuestionType.TrueFalse => CreateTrueFalseQuestion(facts),
-            QuestionType.Open => CreateOpenQuestion(facts),
-            QuestionType.FillBlank => CreateFillBlankQuestion(facts),
-            _ => CreateMultipleChoiceQuestion(facts)
+            QuestionType.MultipleChoice => CreateMultipleChoiceQuestion(fact),
+            QuestionType.TrueFalse => CreateTrueFalseQuestion(fact),
+            QuestionType.Open => CreateOpenQuestion(fact),
+            QuestionType.FillBlank => CreateFillBlankQuestion(fact),
+            _ => CreateMultipleChoiceQuestion(fact)
         };
     }
 
-    private static QuizGenerationQuestionDto CreateMultipleChoiceQuestion(List<string> facts)
+    private static QuizGenerationQuestionDto CreateMultipleChoiceQuestion(string fact)
     {
-        var statement = facts.FirstOrDefault() ?? "Temat nie został rozpoznany.";
-        var correctAnswer = ExtractKeyword(statement);
-        var distractors = facts.Skip(1).Select(ExtractKeyword).Where(x => !string.IsNullOrWhiteSpace(x)).Take(3).ToList();
-        var options = new List<string> { correctAnswer };
-        options.AddRange(distractors);
+        var statement = fact.Trim().TrimEnd('.', '!', '?');
+        var purposeMatch = Regex.Match(statement, @"^(?<subject>[\p{Lu}][\p{L}\s]{2,50}?)\s+służą do\s+(?<purpose>.+)$");
+        string question;
+        string correctAnswer;
+        List<string> options;
 
-        if (options.Count < 4)
+        if (purposeMatch.Success)
         {
-            options.AddRange(new[] { "Opcja B", "Opcja C", "Opcja D" });
+            var subject = purposeMatch.Groups["subject"].Value.Trim();
+            var purpose = Capitalize(purposeMatch.Groups["purpose"].Value.Trim());
+            question = $"Jakie jest zastosowanie: {subject}?";
+            correctAnswer = $"{purpose}.";
+            options = new List<string>
+            {
+                correctAnswer,
+                "Przedstawianie kolejności komunikatów wymienianych między obiektami.",
+                "Modelowanie przebiegu procesu biznesowego i podejmowanych decyzji.",
+                "Określanie stanów obiektu oraz przejść między tymi stanami."
+            };
+        }
+        else
+        {
+            question = "Które stwierdzenie jest zgodne z materiałem?";
+            correctAnswer = $"{Capitalize(statement)}.";
+            options = new List<string>
+            {
+                correctAnswer,
+                "Dotyczy wyłącznie wyglądu interfejsu użytkownika.",
+                "Opisuje jedynie kolejność wykonywania czynności w czasie.",
+                "Nie przedstawia żadnych zależności ani elementów omawianego zagadnienia."
+            };
         }
 
         return new QuizGenerationQuestionDto
         {
             Id = Guid.NewGuid(),
-            Text = $"Wybierz poprawną odpowiedź dotycząca: {statement}",
+            Text = question,
             Type = QuestionType.MultipleChoice,
-            Options = options.Take(4).ToList(),
+            Options = options,
             CorrectAnswer = correctAnswer,
-            Explanation = "To pytanie zostało wygenerowane w wersji MVP na podstawie dostarczonego źródła.",
-            IsApproved = false
+            Explanation = $"Poprawna odpowiedź wynika bezpośrednio ze zdania: „{statement}”.",
+            IsApproved = null
         };
     }
 
-    private static QuizGenerationQuestionDto CreateTrueFalseQuestion(List<string> facts)
+    private static QuizGenerationQuestionDto CreateTrueFalseQuestion(string fact)
     {
-        var statement = facts.FirstOrDefault() ?? "To stwierdzenie jest kluczowe dla omawianego materiału.";
+        var statement = fact;
         return new QuizGenerationQuestionDto
         {
             Id = Guid.NewGuid(),
@@ -205,13 +257,13 @@ public class QuizGenerationService
             Options = new List<string> { "Prawda", "Fałsz" },
             CorrectAnswer = "Prawda",
             Explanation = "Pytanie prawda/fałsz zostało wygenerowane automatycznie na podstawie treści wejściowej.",
-            IsApproved = false
+            IsApproved = null
         };
     }
 
-    private static QuizGenerationQuestionDto CreateOpenQuestion(List<string> facts)
+    private static QuizGenerationQuestionDto CreateOpenQuestion(string fact)
     {
-        var statement = facts.FirstOrDefault() ?? "Opisz główną ideę materiału.";
+        var statement = fact;
         return new QuizGenerationQuestionDto
         {
             Id = Guid.NewGuid(),
@@ -219,13 +271,13 @@ public class QuizGenerationService
             Type = QuestionType.Open,
             CorrectAnswer = "Odpowiedź uczestnika zostanie oceniona ręcznie.",
             Explanation = "To pytanie otwarte wspiera własne wyjaśnienie przez użytkownika.",
-            IsApproved = false
+            IsApproved = null
         };
     }
 
-    private static QuizGenerationQuestionDto CreateFillBlankQuestion(List<string> facts)
+    private static QuizGenerationQuestionDto CreateFillBlankQuestion(string fact)
     {
-        var statement = facts.FirstOrDefault() ?? "Najważniejszy element opisywany w tekście to ___ .";
+        var statement = fact;
         var keyword = ExtractKeyword(statement);
         var blanked = statement.Replace(keyword, "___", StringComparison.OrdinalIgnoreCase);
         return new QuizGenerationQuestionDto
@@ -235,7 +287,7 @@ public class QuizGenerationService
             Type = QuestionType.FillBlank,
             CorrectAnswer = keyword,
             Explanation = "To pytanie uzupełniania luk jest prostą wersją MVP.",
-            IsApproved = false
+            IsApproved = null
         };
     }
 
@@ -252,7 +304,13 @@ public class QuizGenerationService
 
     private static string NormalizeInput(string text)
     {
-        return Regex.Replace(text.Trim(), @"\s+", " ");
+        var withSentenceBreaks = Regex.Replace(text.Trim(), @"(?<=\p{Ll})(?=\p{Lu})", ". ");
+        return Regex.Replace(withSentenceBreaks, @"\s+", " ");
+    }
+
+    private static string Capitalize(string value)
+    {
+        return string.IsNullOrWhiteSpace(value) ? value : char.ToUpperInvariant(value[0]) + value[1..];
     }
 
     private static List<string> ExtractSentences(string input)

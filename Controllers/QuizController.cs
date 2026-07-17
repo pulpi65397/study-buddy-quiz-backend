@@ -26,8 +26,13 @@ public class QuizController : ControllerBase
     }
 
     [HttpPost("generate-text")]
-    public ActionResult<QuizGenerationResponseDto> GenerateFromText([FromBody] QuizGenerationRequest request)
+    public ActionResult<QuizGenerationResponseDto> GenerateFromText([FromBody] QuizGenerationRequest request, [FromHeader(Name = "X-OpenAI-Api-Key")] string? apiKey)
     {
+        if (string.IsNullOrWhiteSpace(apiKey))
+        {
+            return BadRequest(new { message = "Podaj klucz OpenAI API." });
+        }
+
         if (string.IsNullOrWhiteSpace(request.Content))
         {
             return BadRequest(new { message = "Treść wejściowa jest wymagana." });
@@ -38,14 +43,20 @@ public class QuizController : ControllerBase
         var response = _quizGenerationService.GenerateFromText(
             request.Content,
             request.QuestionCount,
-            questionTypes);
+            questionTypes,
+            apiKey);
 
         return Ok(response);
     }
 
     [HttpPost("generate-url")]
-    public ActionResult<QuizGenerationResponseDto> GenerateFromUrl([FromBody] QuizGenerationRequest request)
+    public ActionResult<QuizGenerationResponseDto> GenerateFromUrl([FromBody] QuizGenerationRequest request, [FromHeader(Name = "X-OpenAI-Api-Key")] string? apiKey)
     {
+        if (string.IsNullOrWhiteSpace(apiKey))
+        {
+            return BadRequest(new { message = "Podaj klucz OpenAI API." });
+        }
+
         if (string.IsNullOrWhiteSpace(request.Url))
         {
             return BadRequest(new { message = "Adres URL jest wymagany." });
@@ -56,14 +67,20 @@ public class QuizController : ControllerBase
         var response = _quizGenerationService.GenerateFromUrl(
             request.Url,
             request.QuestionCount,
-            questionTypes);
+            questionTypes,
+            apiKey);
 
         return Ok(response);
     }
 
     [HttpPost("generate-file")]
-    public ActionResult<QuizGenerationResponseDto> GenerateFromFile([FromForm] IFormFile file, [FromForm] int questionCount, [FromForm] string? questionTypes)
+    public ActionResult<QuizGenerationResponseDto> GenerateFromFile([FromForm] IFormFile file, [FromForm] int questionCount, [FromForm] string? questionTypes, [FromHeader(Name = "X-OpenAI-Api-Key")] string? apiKey)
     {
+        if (string.IsNullOrWhiteSpace(apiKey))
+        {
+            return BadRequest(new { message = "Podaj klucz OpenAI API." });
+        }
+
         if (file is null || file.Length == 0)
         {
             return BadRequest(new { message = "Wgraj plik PDF, DOCX lub TXT." });
@@ -76,7 +93,7 @@ public class QuizController : ControllerBase
         }
 
         var parsedTypes = ParseQuestionTypes(questionTypes);
-        var response = _quizGenerationService.GenerateFromFileContent(content, questionCount, parsedTypes);
+        var response = _quizGenerationService.GenerateFromFileContent(content, questionCount, parsedTypes, apiKey);
 
         return Ok(response);
     }
@@ -156,7 +173,7 @@ public class QuizController : ControllerBase
                 x.SourceType,
                 x.CreatedAt,
                 QuestionsCount = x.Questions.Count,
-                ApprovedQuestionsCount = x.Questions.Count(q => q.IsApproved)
+                ApprovedQuestionsCount = x.Questions.Count(q => q.IsApproved == true)
             })
             .ToListAsync();
 

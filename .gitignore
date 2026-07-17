@@ -46,6 +46,7 @@ CodeCoverage/
 
 # Local app data
 study-buddy-quiz.db
+Microsoft/
 AGENTS.md
 
 # MSBuild Binary and Structured Log

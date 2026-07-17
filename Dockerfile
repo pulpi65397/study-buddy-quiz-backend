@@ -8,6 +8,7 @@ COPY . .
 RUN dotnet publish "./study-buddy-quiz.csproj" -c Release -o /app/publish /p:UseAppHost=false
 
 FROM mcr.microsoft.com/dotnet/aspnet:9.0 AS final
+RUN apt-get update && apt-get install -y libsqlite3-0 && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 EXPOSE 8080
 

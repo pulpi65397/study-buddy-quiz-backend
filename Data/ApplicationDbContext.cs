@@ -25,6 +25,8 @@ public class ApplicationDbContext : DbContext
 
         modelBuilder.Entity<Question>()
             .Property(q => q.Options)
-            .HasColumnType("jsonb");
+            .HasConversion(
+                options => System.Text.Json.JsonSerializer.Serialize(options, (System.Text.Json.JsonSerializerOptions?)null),
+                json => System.Text.Json.JsonSerializer.Deserialize<List<string>>(json, (System.Text.Json.JsonSerializerOptions?)null) ?? new List<string>());
     }
 }

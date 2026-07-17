@@ -10,6 +10,7 @@ RUN dotnet publish "./study-buddy-quiz.csproj" -c Release -o /app/publish /p:Use
 FROM mcr.microsoft.com/dotnet/aspnet:9.0 AS final
 RUN apt-get update && apt-get install -y libsqlite3-0 && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
+RUN mkdir -p /app/data
 EXPOSE 8080
 
 ENV ASPNETCORE_URLS=http://+:8080

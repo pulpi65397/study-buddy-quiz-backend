@@ -116,7 +116,7 @@ public class QuizController : ControllerBase
             CreatedAt = DateTime.UtcNow,
             Questions = request.Questions.Select(question => new Question
             {
-                Id = question.Id,
+                Id = Guid.NewGuid(),
                 Text = question.Text,
                 Type = question.Type,
                 Options = question.Options,

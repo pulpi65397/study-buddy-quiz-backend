@@ -18,6 +18,8 @@ public class Quiz
 
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 
+    public string? UserId { get; set; }
+
     public List<Question> Questions { get; set; } = new();
 }
 

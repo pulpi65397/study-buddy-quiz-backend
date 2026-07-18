@@ -106,6 +106,8 @@ public class QuizController : ControllerBase
             return BadRequest(new { message = "Quiz musi zawierać co najmniej jedno pytanie." });
         }
 
+        var userId = GetUserId();
+
         var quiz = new Quiz
         {
             Id = Guid.NewGuid(),
@@ -114,6 +116,7 @@ public class QuizController : ControllerBase
             SourceText = request.SourceText,
             SourceUrl = request.SourceUrl,
             CreatedAt = DateTime.UtcNow,
+            UserId = userId,
             Questions = request.Questions.Select(question => new Question
             {
                 Id = Guid.NewGuid(),
@@ -163,8 +166,16 @@ public class QuizController : ControllerBase
     [HttpGet("history")]
     public async Task<ActionResult<IEnumerable<object>>> GetHistory()
     {
-        var quizzes = await _context.Quizzes
+        var userId = GetUserId();
+
+        var query = _context.Quizzes
             .Include(x => x.Questions)
+            .AsQueryable();
+
+        if (!string.IsNullOrWhiteSpace(userId))
+            query = query.Where(x => x.UserId == userId);
+
+        var quizzes = await query
             .OrderByDescending(x => x.CreatedAt)
             .Select(x => new
             {
@@ -178,6 +189,32 @@ public class QuizController : ControllerBase
             .ToListAsync();
 
         return Ok(quizzes);
+    }
+
+    private string? GetUserId()
+    {
+        return Request.Headers.Authorization.FirstOrDefault()
+            is string authHeader && authHeader.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase)
+            ? DecodeSubFromJwt(authHeader[7..])
+            : null;
+    }
+
+    private static string? DecodeSubFromJwt(string token)
+    {
+        try
+        {
+            var parts = token.Split('.');
+            if (parts.Length < 2) return null;
+            var payload = parts[1];
+            payload = payload.PadRight(payload.Length + (4 - payload.Length % 4) % 4, '=');
+            var json = System.Text.Encoding.UTF8.GetString(Convert.FromBase64String(payload));
+            using var doc = System.Text.Json.JsonDocument.Parse(json);
+            return doc.RootElement.TryGetProperty("sub", out var sub) ? sub.GetString() : null;
+        }
+        catch
+        {
+            return null;
+        }
     }
 
     private static List<QuestionType> ParseQuestionTypes(string? questionTypes)

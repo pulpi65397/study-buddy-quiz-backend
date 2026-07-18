@@ -163,6 +163,23 @@ public class QuizController : ControllerBase
         return Ok(new { message = request.Approved ? "Pytanie zatwierdzone." : "Pytanie odrzucone." });
     }
 
+    [HttpDelete("{quizId:guid}/questions/{questionId:guid}")]
+    public async Task<IActionResult> DeleteQuestion(Guid quizId, Guid questionId)
+    {
+        var question = await _context.Questions
+            .FirstOrDefaultAsync(x => x.QuizId == quizId && x.Id == questionId);
+
+        if (question is null)
+        {
+            return NotFound(new { message = "Pytanie nie zostało znalezione." });
+        }
+
+        _context.Questions.Remove(question);
+        await _context.SaveChangesAsync();
+
+        return Ok(new { message = "Pytanie usunięte." });
+    }
+
     [HttpGet("history")]
     public async Task<ActionResult<IEnumerable<object>>> GetHistory()
     {

@@ -18,13 +18,13 @@ public class QuizGenerationService
         _httpClient = httpClient;
     }
 
-    public QuizGenerationResponseDto GenerateFromText(string text, int questionCount, IReadOnlyCollection<QuestionType> questionTypes, string apiKey)
+    public async Task<QuizGenerationResponseDto> GenerateFromText(string text, int questionCount, IReadOnlyCollection<QuestionType> questionTypes, string apiKey)
     {
         var cleanedText = NormalizeInput(text);
         var sentences = ExtractSentences(cleanedText);
-        var facts = sentences.Count > 0 ? sentences : new List<string> { cleanedText };
+        var facts = sentences.Count > 0 ? sentences : [cleanedText];
 
-        var generatedQuestions = TryGenerateWithOpenAi(cleanedText, questionCount, questionTypes, apiKey);
+        var generatedQuestions = await TryGenerateWithOpenAi(cleanedText, questionCount, questionTypes, apiKey);
         if (generatedQuestions.Count == 0)
         {
             generatedQuestions = BuildFallbackQuestions(facts, questionCount, questionTypes);
@@ -39,26 +39,26 @@ public class QuizGenerationService
         };
     }
 
-    public QuizGenerationResponseDto GenerateFromUrl(string url, int questionCount, IReadOnlyCollection<QuestionType> questionTypes, string apiKey)
+    public Task<QuizGenerationResponseDto> GenerateFromUrl(string url, int questionCount, IReadOnlyCollection<QuestionType> questionTypes, string apiKey)
     {
-        var sourceText = $"Artykuł: {url}. Treść z linku została odczytana jako punkt startowy do generowania quizu.";
+        var sourceText = $"Artyku\u0142: {url}. Tre\u015b\u0107 z linku zosta\u0142a odczytana jako punkt startowy do generowania quizu.";
         return GenerateFromText(sourceText, questionCount, questionTypes, apiKey);
     }
 
-    public QuizGenerationResponseDto GenerateFromFileContent(string content, int questionCount, IReadOnlyCollection<QuestionType> questionTypes, string apiKey)
+    public Task<QuizGenerationResponseDto> GenerateFromFileContent(string content, int questionCount, IReadOnlyCollection<QuestionType> questionTypes, string apiKey)
     {
         return GenerateFromText(content, questionCount, questionTypes, apiKey);
     }
 
-    private List<QuizGenerationQuestionDto> TryGenerateWithOpenAi(string text, int questionCount, IReadOnlyCollection<QuestionType> questionTypes, string apiKey)
+    private async Task<List<QuizGenerationQuestionDto>> TryGenerateWithOpenAi(string text, int questionCount, IReadOnlyCollection<QuestionType> questionTypes, string apiKey)
     {
         var types = questionTypes.Any() ? questionTypes : new[] { QuestionType.MultipleChoice, QuestionType.TrueFalse };
 
-        var prompt = $"Wygeneruj po polsku quiz wyłącznie na podstawie poniższego materiału. Zwróć TYLKO poprawny JSON bez markdownu. " +
+        var prompt = $"Wygeneruj po polsku quiz wy\u0142\u0105cznie na podstawie poni\u017cszego materia\u0142u. Zwr\u00f3\u0107 TYLKO poprawny JSON bez markdownu. " +
                       "Schemat: { \"questions\": [{ \"text\": string, \"type\": string, \"options\": string[], \"correctAnswer\": string, \"explanation\": string }] }. " +
-                      "Dla pytania MultipleChoice przygotuj dokładnie cztery unikalne, pełne i sensowne odpowiedzi. Jedna odpowiedź musi być poprawna, występować w options i dokładnie odpowiadać correctAnswer. Nie używaj pojedynczych słów, wypełniaczy ani fragmentów polecenia. Pytanie ma być konkretne, a explanation ma krótko uzasadniać poprawną odpowiedź materiałem. " +
-                      $"Liczba pytań: {Math.Max(1, questionCount)}. Typy pytań: {string.Join(", ", types)}. " +
-                      $"Materiał: {text}";
+                      "Dla pytania MultipleChoice przygotuj dok\u0142adnie cztery unikalne, pe\u0142ne i sensowne odpowiedzi. Jedna odpowied\u017a musi by\u0107 poprawna, wyst\u0119powa\u0107 w options i dok\u0142adnie odpowiada\u0107 correctAnswer. Nie u\u017cywaj pojedynczych s\u0142\u00f3w, wype\u0142niaczy ani fragment\u00f3w polecenia. Pytanie ma by\u0107 konkretne, a explanation ma kr\u00f3tko uzasadnia\u0107 poprawn\u0105 odpowied\u017a materia\u0142em. " +
+                      $"Liczba pyta\u0144: {Math.Max(1, questionCount)}. Typy pyta\u0144: {string.Join(", ", types)}. " +
+                      $"Materia\u0142: {text}";
 
         var requestBody = new
         {
@@ -116,12 +116,12 @@ public class QuizGenerationService
 
         try
         {
-            using var response = _httpClient.Send(request);
-            var responseContent = response.Content.ReadAsStringAsync().GetAwaiter().GetResult();
+            using var response = await _httpClient.SendAsync(request);
+            var responseContent = await response.Content.ReadAsStringAsync();
 
             if (!response.IsSuccessStatusCode)
             {
-                return new List<QuizGenerationQuestionDto>();
+                return [];
             }
 
             using var document = JsonDocument.Parse(responseContent);
@@ -132,7 +132,7 @@ public class QuizGenerationService
 
             if (string.IsNullOrWhiteSpace(outputText))
             {
-                return new List<QuizGenerationQuestionDto>();
+                return [];
             }
 
             var normalized = outputText.Trim();
@@ -149,7 +149,7 @@ public class QuizGenerationService
 
             if (openAiResponse?.Questions is null || openAiResponse.Questions.Count == 0)
             {
-                return new List<QuizGenerationQuestionDto>();
+                return [];
             }
 
             return openAiResponse.Questions.Select(question => new QuizGenerationQuestionDto
@@ -165,7 +165,7 @@ public class QuizGenerationService
         }
         catch
         {
-            return new List<QuizGenerationQuestionDto>();
+            return [];
         }
     }
 
@@ -173,7 +173,7 @@ public class QuizGenerationService
     {
         var effectiveTypes = questionTypes.Any() ? questionTypes.ToArray() : new[] { QuestionType.MultipleChoice, QuestionType.TrueFalse };
         var declarativeFacts = facts
-            .Where(fact => fact.Contains(" służą do ", StringComparison.OrdinalIgnoreCase))
+            .Where(fact => fact.Contains(" s\u0142u\u017c\u0105 do ", StringComparison.OrdinalIgnoreCase))
             .ToList();
         var sourceFacts = declarativeFacts.Count > 0 ? declarativeFacts : facts;
         var generatedQuestions = new List<QuizGenerationQuestionDto>();
@@ -202,7 +202,7 @@ public class QuizGenerationService
     private static QuizGenerationQuestionDto CreateMultipleChoiceQuestion(string fact)
     {
         var statement = fact.Trim().TrimEnd('.', '!', '?');
-        var purposeMatch = Regex.Match(statement, @"^(?<subject>[\p{Lu}][\p{L}\s]{2,50}?)\s+służą do\s+(?<purpose>.+)$");
+        var purposeMatch = Regex.Match(statement, @"^(?<subject>[\p{Lu}][\p{L}\s]{2,50}?)\s+s\u0142u\u017c\u0105 do\s+(?<purpose>.+)$");
         string question;
         string correctAnswer;
         List<string> options;
@@ -213,25 +213,25 @@ public class QuizGenerationService
             var purpose = Capitalize(purposeMatch.Groups["purpose"].Value.Trim());
             question = $"Jakie jest zastosowanie: {subject}?";
             correctAnswer = $"{purpose}.";
-            options = new List<string>
-            {
+            options =
+            [
                 correctAnswer,
-                "Przedstawianie kolejności komunikatów wymienianych między obiektami.",
+                "Przedstawianie kolejno\u015bci komunikat\u00f3w wymienianych mi\u0119dzy obiektami.",
                 "Modelowanie przebiegu procesu biznesowego i podejmowanych decyzji.",
-                "Określanie stanów obiektu oraz przejść między tymi stanami."
-            };
+                "Okre\u015blanie stan\u00f3w obiektu oraz przej\u015b\u0107 mi\u0119dzy tymi stanami."
+            ];
         }
         else
         {
-            question = "Które stwierdzenie jest zgodne z materiałem?";
+            question = "Kt\u00f3re stwierdzenie jest zgodne z materia\u0142em?";
             correctAnswer = $"{Capitalize(statement)}.";
-            options = new List<string>
-            {
+            options =
+            [
                 correctAnswer,
-                "Dotyczy wyłącznie wyglądu interfejsu użytkownika.",
-                "Opisuje jedynie kolejność wykonywania czynności w czasie.",
-                "Nie przedstawia żadnych zależności ani elementów omawianego zagadnienia."
-            };
+                "Dotyczy wy\u0142\u0105cznie wygl\u0105du interfejsu u\u017cytkownika.",
+                "Opisuje jedynie kolejno\u015b\u0107 wykonywania czynno\u015bci w czasie.",
+                "Nie przedstawia \u017cadnych zale\u017cno\u015bci ani element\u00f3w omawianego zagadnienia."
+            ];
         }
 
         return new QuizGenerationQuestionDto
@@ -241,52 +241,49 @@ public class QuizGenerationService
             Type = QuestionType.MultipleChoice,
             Options = options,
             CorrectAnswer = correctAnswer,
-            Explanation = $"Poprawna odpowiedź wynika bezpośrednio ze zdania: „{statement}”.",
+            Explanation = $"Poprawna odpowied\u017a wynika bezpo\u015brednio ze zdania: \u201e{statement}\u201d.",
             IsApproved = null
         };
     }
 
     private static QuizGenerationQuestionDto CreateTrueFalseQuestion(string fact)
     {
-        var statement = fact;
         return new QuizGenerationQuestionDto
         {
             Id = Guid.NewGuid(),
-            Text = $"Czy poniższe zdanie jest prawdziwe? {statement}",
+            Text = $"Czy poni\u017csze zdanie jest prawdziwe? {fact}",
             Type = QuestionType.TrueFalse,
-            Options = new List<string> { "Prawda", "Fałsz" },
+            Options = ["Prawda", "Fa\u0142sz"],
             CorrectAnswer = "Prawda",
-            Explanation = "Pytanie prawda/fałsz zostało wygenerowane automatycznie na podstawie treści wejściowej.",
+            Explanation = "Pytanie prawda/fa\u0142sz zosta\u0142o wygenerowane automatycznie na podstawie tre\u015bci wej\u015bciowej.",
             IsApproved = null
         };
     }
 
     private static QuizGenerationQuestionDto CreateOpenQuestion(string fact)
     {
-        var statement = fact;
         return new QuizGenerationQuestionDto
         {
             Id = Guid.NewGuid(),
-            Text = $"Na podstawie tekstu wyjaśnij, o czym mowa w zdaniu: {statement}",
+            Text = $"Na podstawie tekstu wyja\u015bnij, o czym mowa w zdaniu: {fact}",
             Type = QuestionType.Open,
-            CorrectAnswer = "Odpowiedź uczestnika zostanie oceniona ręcznie.",
-            Explanation = "To pytanie otwarte wspiera własne wyjaśnienie przez użytkownika.",
+            CorrectAnswer = "Odpowied\u017a uczestnika zostanie oceniona r\u0119cznie.",
+            Explanation = "To pytanie otwarte wspiera w\u0142asne wyja\u015bnienie przez u\u017cytkownika.",
             IsApproved = null
         };
     }
 
     private static QuizGenerationQuestionDto CreateFillBlankQuestion(string fact)
     {
-        var statement = fact;
-        var keyword = ExtractKeyword(statement);
-        var blanked = statement.Replace(keyword, "___", StringComparison.OrdinalIgnoreCase);
+        var keyword = ExtractKeyword(fact);
+        var blanked = fact.Replace(keyword, "___", StringComparison.OrdinalIgnoreCase);
         return new QuizGenerationQuestionDto
         {
             Id = Guid.NewGuid(),
-            Text = $"Uzupełnij lukę: {blanked}",
+            Text = $"Uzupe\u0142nij luk\u0119: {blanked}",
             Type = QuestionType.FillBlank,
             CorrectAnswer = keyword,
-            Explanation = "To pytanie uzupełniania luk jest prostą wersją MVP.",
+            Explanation = "To pytanie uzupe\u0142niania luk jest prost\u0105 wersj\u0105 MVP.",
             IsApproved = null
         };
     }
@@ -323,6 +320,6 @@ public class QuizGenerationService
 
     private sealed class OpenAiQuizResponse
     {
-        public List<QuizGenerationQuestionDto> Questions { get; set; } = new();
+        public List<QuizGenerationQuestionDto> Questions { get; set; } = [];
     }
 }

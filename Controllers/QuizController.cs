@@ -26,75 +26,48 @@ public class QuizController : ControllerBase
     }
 
     [HttpPost("generate-text")]
-    public ActionResult<QuizGenerationResponseDto> GenerateFromText([FromBody] QuizGenerationRequest request, [FromHeader(Name = "X-OpenAI-Api-Key")] string? apiKey)
+    public async Task<ActionResult<QuizGenerationResponseDto>> GenerateFromText([FromBody] QuizGenerationRequest request, [FromHeader(Name = "X-OpenAI-Api-Key")] string? apiKey)
     {
         if (string.IsNullOrWhiteSpace(apiKey))
-        {
             return BadRequest(new { message = "Podaj klucz OpenAI API." });
-        }
 
         if (string.IsNullOrWhiteSpace(request.Content))
-        {
             return BadRequest(new { message = "Treść wejściowa jest wymagana." });
-        }
 
         var questionTypes = ParseQuestionTypes(request.QuestionTypes);
-
-        var response = _quizGenerationService.GenerateFromText(
-            request.Content,
-            request.QuestionCount,
-            questionTypes,
-            apiKey);
-
+        var response = await _quizGenerationService.GenerateFromText(request.Content, request.QuestionCount, questionTypes, apiKey);
         return Ok(response);
     }
 
     [HttpPost("generate-url")]
-    public ActionResult<QuizGenerationResponseDto> GenerateFromUrl([FromBody] QuizGenerationRequest request, [FromHeader(Name = "X-OpenAI-Api-Key")] string? apiKey)
+    public async Task<ActionResult<QuizGenerationResponseDto>> GenerateFromUrl([FromBody] QuizGenerationRequest request, [FromHeader(Name = "X-OpenAI-Api-Key")] string? apiKey)
     {
         if (string.IsNullOrWhiteSpace(apiKey))
-        {
             return BadRequest(new { message = "Podaj klucz OpenAI API." });
-        }
 
         if (string.IsNullOrWhiteSpace(request.Url))
-        {
             return BadRequest(new { message = "Adres URL jest wymagany." });
-        }
 
         var questionTypes = ParseQuestionTypes(request.QuestionTypes);
-
-        var response = _quizGenerationService.GenerateFromUrl(
-            request.Url,
-            request.QuestionCount,
-            questionTypes,
-            apiKey);
-
+        var response = await _quizGenerationService.GenerateFromUrl(request.Url, request.QuestionCount, questionTypes, apiKey);
         return Ok(response);
     }
 
     [HttpPost("generate-file")]
-    public ActionResult<QuizGenerationResponseDto> GenerateFromFile([FromForm] IFormFile file, [FromForm] int questionCount, [FromForm] string? questionTypes, [FromHeader(Name = "X-OpenAI-Api-Key")] string? apiKey)
+    public async Task<ActionResult<QuizGenerationResponseDto>> GenerateFromFile([FromForm] IFormFile file, [FromForm] int questionCount, [FromForm] string? questionTypes, [FromHeader(Name = "X-OpenAI-Api-Key")] string? apiKey)
     {
         if (string.IsNullOrWhiteSpace(apiKey))
-        {
             return BadRequest(new { message = "Podaj klucz OpenAI API." });
-        }
 
         if (file is null || file.Length == 0)
-        {
             return BadRequest(new { message = "Wgraj plik PDF, DOCX lub TXT." });
-        }
 
         var content = _quizContentExtractor.ExtractText(file);
         if (string.IsNullOrWhiteSpace(content))
-        {
             return BadRequest(new { message = "Nie udało się odczytać treści z pliku." });
-        }
 
         var parsedTypes = ParseQuestionTypes(questionTypes);
-        var response = _quizGenerationService.GenerateFromFileContent(content, questionCount, parsedTypes, apiKey);
-
+        var response = await _quizGenerationService.GenerateFromFileContent(content, questionCount, parsedTypes, apiKey);
         return Ok(response);
     }
 
@@ -102,11 +75,10 @@ public class QuizController : ControllerBase
     public async Task<ActionResult<QuizGenerationResponseDto>> SaveQuiz([FromBody] SaveQuizRequest request)
     {
         if (request.Questions.Count == 0)
-        {
             return BadRequest(new { message = "Quiz musi zawierać co najmniej jedno pytanie." });
-        }
 
-        var userId = GetUserId();
+        var userId = HttpContext.User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value
+                  ?? HttpContext.User.FindFirst("sub")?.Value;
 
         var quiz = new Quiz
         {
@@ -153,9 +125,7 @@ public class QuizController : ControllerBase
             .FirstOrDefaultAsync(x => x.QuizId == quizId && x.Id == questionId);
 
         if (question is null)
-        {
             return NotFound(new { message = "Pytanie nie zostało znalezione." });
-        }
 
         question.IsApproved = request.Approved;
         await _context.SaveChangesAsync();
@@ -170,9 +140,7 @@ public class QuizController : ControllerBase
             .FirstOrDefaultAsync(x => x.QuizId == quizId && x.Id == questionId);
 
         if (question is null)
-        {
             return NotFound(new { message = "Pytanie nie zostało znalezione." });
-        }
 
         _context.Questions.Remove(question);
         await _context.SaveChangesAsync();
@@ -183,7 +151,8 @@ public class QuizController : ControllerBase
     [HttpGet("history")]
     public async Task<ActionResult<IEnumerable<object>>> GetHistory()
     {
-        var userId = GetUserId();
+        var userId = HttpContext.User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value
+                  ?? HttpContext.User.FindFirst("sub")?.Value;
 
         var query = _context.Quizzes
             .Include(x => x.Questions)
@@ -208,38 +177,10 @@ public class QuizController : ControllerBase
         return Ok(quizzes);
     }
 
-    private string? GetUserId()
-    {
-        return Request.Headers.Authorization.FirstOrDefault()
-            is string authHeader && authHeader.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase)
-            ? DecodeSubFromJwt(authHeader[7..])
-            : null;
-    }
-
-    private static string? DecodeSubFromJwt(string token)
-    {
-        try
-        {
-            var parts = token.Split('.');
-            if (parts.Length < 2) return null;
-            var payload = parts[1];
-            payload = payload.PadRight(payload.Length + (4 - payload.Length % 4) % 4, '=');
-            var json = System.Text.Encoding.UTF8.GetString(Convert.FromBase64String(payload));
-            using var doc = System.Text.Json.JsonDocument.Parse(json);
-            return doc.RootElement.TryGetProperty("sub", out var sub) ? sub.GetString() : null;
-        }
-        catch
-        {
-            return null;
-        }
-    }
-
     private static List<QuestionType> ParseQuestionTypes(string? questionTypes)
     {
         if (string.IsNullOrWhiteSpace(questionTypes))
-        {
-            return new List<QuestionType>();
-        }
+            return [];
 
         return ParseQuestionTypes(questionTypes
             .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries));
@@ -248,16 +189,12 @@ public class QuizController : ControllerBase
     private static List<QuestionType> ParseQuestionTypes(IEnumerable<string>? questionTypes)
     {
         if (questionTypes is null)
-        {
-            return new List<QuestionType>();
-        }
+            return [];
 
-        var types = questionTypes
+        return questionTypes
             .Where(type => !string.IsNullOrWhiteSpace(type))
             .Select(type => Enum.TryParse<QuestionType>(type, ignoreCase: true, out var parsed) ? parsed : QuestionType.MultipleChoice)
             .Distinct()
             .ToList();
-
-        return types;
     }
 }
